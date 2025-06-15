@@ -1,58 +1,59 @@
-# Fichier: scripts/dex_scanner.py (Nouvelle Version avec API de Recherche)
+# Fichier: scripts/dex_scanner.py (Version Finale, Propre et Correcte)
 import requests
+import time
 from datetime import datetime, timedelta, timezone
 
-def find_new_solana_pairs():
-    print("Recherche de nouvelles paires sur Solana (via API de recherche)...")
+def find_new_pairs_on_chain(chain_name):
+    print(f"\n--- Recherche sur {chain_name.upper()} ---")
     
-    # --- PARAMÈTRES DE RECHERCHE (tu peux les ajuster ici) ---
-    # On cherche les paires créées il y a moins de 7 jours.
-    # On remet des valeurs raisonnables pour commencer.
-    days_to_search = 7
-    min_liquidity_usd = 1000
+    # Paramètres de filtrage que tu peux ajuster
+    hours_to_search = 168
+    min_volume_24h = 50000
+    min_liquidity_usd = 10000
 
-    # On calcule la date de départ pour la recherche
-    search_start_date = datetime.now(timezone.utc) - timedelta(days=days_to_search)
-    # On la formate comme l'attend l'API (ex: 2024-05-20T10:00:00Z)
-    formatted_date = search_start_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=hours_to_search)
     
-    # On utilise l'endpoint de recherche. La requête est dans le 'q'.
-    # On cherche les paires sur Solana, créées après notre date, avec une liquidité > min_liquidity
-    api_url = (
-        "https://api.dexscreener.com/latest/dex/search"
-        f"?q=pairCreatedAt after {formatted_date} AND chain:solana AND liquidity > {min_liquidity_usd}"
-    )
-
-    print(f"URL de l'API utilisée : {api_url}")
+    api_url = "https://api.dexscreener.com/latest/dex/search"
+    params = {
+        'q': f'chain:{chain_name} liquidity > {min_liquidity_usd} volume > {min_volume_24h}',
+        'orderBy': 'pairCreatedAt',
+        'order': 'desc'
+    }
+    
+    print(f"  -> Appel API pour la chaîne '{chain_name}'...")
 
     try:
-        response = requests.get(api_url, headers={'User-Agent': 'CryptoScannerBot/1.0'})
-        response.raise_for_status()  # Vérifie si l'API a retourné une erreur (4xx, 5xx)
+        response = requests.get(api_url, params=params, headers={'User-Agent': 'CryptoScannerBot/1.0'})
+        response.raise_for_status()
         
         data = response.json()
-        all_pairs = data.get('pairs', [])
+        pairs_from_api = data.get('pairs', [])
         
-        if not all_pairs:
-            print("Aucune paire retournée par la recherche de l'API.")
+        if not pairs_from_api:
+            print("  -> Aucune paire récente avec activité trouvée sur cette chaîne.")
             return []
 
-        print(f"{len(all_pairs)} paires trouvées par l'API. Formatage en cours...")
-        
-        # Le filtrage est déjà fait par l'API, on n'a plus qu'à formater les résultats.
-        formatted_pairs = []
-        for pair in all_pairs:
-            formatted_pairs.append({
-                'name': pair.get('baseToken', {}).get('name', 'N/A'),
-                'symbol': pair.get('baseToken', {}).get('symbol', 'N/A'),
-                'liquidity': float(pair.get('liquidity', {}).get('usd', 0)),
-                'url': pair.get('url', '#')
-            })
-        
-        return formatted_pairs
+        print(f"  -> {len(pairs_from_api)} paires candidates reçues. Filtrage par date en cours...")
 
-    except requests.exceptions.HTTPError as e:
-        print(f"ERREUR HTTP de l'API: {e.response.status_code} - {e.response.text}")
-        return []
+        all_found_pairs = []
+        for pair in pairs_from_api:
+            created_at_timestamp = pair.get('pairCreatedAt', 0) / 1000
+            pair_creation_date = datetime.fromtimestamp(created_at_timestamp, tz=timezone.utc)
+
+            if pair_creation_date > time_threshold:
+                volume_24h = pair.get('volume', {}).get('h24', 0)
+                all_found_pairs.append({
+                    'chain': chain_name,
+                    'name': pair.get('baseToken', {}).get('name', 'N/A'),
+                    'symbol': pair.get('baseToken', {}).get('symbol', 'N/A'),
+                    'liquidity': float(pair.get('liquidity', {}).get('usd', 0)),
+                    'volume_24h': float(volume_24h),
+                    'url': pair.get('url', '#')
+                })
+        
+        print(f"--- Recherche terminée pour {chain_name.upper()}. Total final : {len(all_found_pairs)} paires ---")
+        return all_found_pairs
+
     except Exception as e:
-        print(f"Une erreur inattendue est survenue: {e}")
+        print(f"  -> Erreur durant le scan de la chaîne {chain_name.upper()}: {e}")
         return []
