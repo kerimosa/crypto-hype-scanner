@@ -1,0 +1,7 @@
+python-dotenv
+requests
+python-telegram-bot
+praw
+ntscraper
+googlesearch-python
+beautifulsoup4
